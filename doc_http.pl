@@ -693,17 +693,15 @@ pldoc_man(Request) :-
                       section(Sec,  [optional(true)])
                     ]),
     (   ground(PI)
-    ->  atom_pi(PI, Obj)
+    ->  Param = predicate(PI)
     ;   ground(Fun)
-    ->  atomic_list_concat([Name,ArityAtom], /, Fun),
-        atom_number(ArityAtom, Arity),
-        Obj = f(Name/Arity)
+    ->  Param = function(Fun)
     ;   ground(F)
-    ->  Obj = c(F)
+    ->  Param = 'CAPI'(F)
     ;   ground(Sec)
-    ->  atom_concat('sec:', Sec, SecID),
-        Obj = section(SecID)
+    ->  Param = section(Sec)
     ),
+    man_param_object(Param, Obj),
     man_title(Obj, Title),
     reply_html_page(
         pldoc(object(Obj)),
@@ -739,10 +737,7 @@ pldoc_object(Request) :-
                     [ object(Atom, []),
                       header(Header, [default(true)])
                     ]),
-    (   catch(atom_to_term(Atom, Obj, _), error(_,_), fail)
-    ->  true
-    ;   atom_to_object(Atom, Obj)
-    ),
+    man_param_object(object(Atom), Obj),
     (   prolog:doc_object_title(Obj, Title)
     ->  true
     ;   Title = Atom

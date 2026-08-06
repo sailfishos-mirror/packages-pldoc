@@ -38,6 +38,11 @@
 	  [ man_page//2,                % +Obj, +Options
 	    man_overview//1,            % +Options
 
+	    man_param_object/2,         % +Param, -Object
+	    pldoc_href_object/2,        % +HREF, -Object
+	    man_object_uri/2,           % +Object, -URI
+	    man_uri_object/2,           % +URI, -Object
+
 	    man_content_tree/2,         % +Dir, -Tree
 	    man_packages_tree/1         % -Tree
 	  ]).
@@ -48,7 +53,7 @@
 :- autoload(doc_html,
 	    [ object_tree/5, private/2, object_page_header/4, objects/4,
 	      object_href/2, object_synopsis/4, object_footer/4,
-	      object_page_footer/4,
+	      object_page_footer/4, localise_object/2,
 	      object_ref/4, object_page/4,
 	      object_source_button//2
 	    ]).
@@ -69,7 +74,9 @@
 	    [ load_html/3, dtd/2, new_sgml_parser/2, set_sgml_parser/2,
 	      sgml_parse/2, free_sgml_parser/1
 	    ]).
-:- autoload(library(uri),[uri_encoded/3]).
+:- autoload(library(uri),
+	    [uri_encoded/3, uri_components/2, uri_data/3,
+	     uri_query_components/2]).
 :- autoload(library(www_browser),[expand_url_path/2]).
 :- autoload(library(http/html_head),[html_requires/3]).
 :- if(exists_source(library(http/http_dispatch))).
@@ -1449,9 +1456,95 @@ prolog:doc_object_href(section(_Level, _No, ID, _Path), HREF) :-
     atom_concat('sec:', Sec, ID),
     http_link_to_id(pldoc_man, [section(Sec)], HREF).
 
+
+		 /*******************************
+		 *         RESOLVE LINKS	*
+		 *******************************/
+
+%!  man_param_object(+Param, -Object) is semidet.
+%
+%   True when Param, a parameter of  the   PlDoc  HTTP interface, refers
+%   to documentation Object.  Param is one of
+%
+%     - predicate(PI)
+%     - function(PI)
+%     - 'CAPI'(Name)
+%     - section(Id)
+%     - object(Text)
+%
+%   @see pldoc_href_object/2 does the same for a complete HREF.
+
+man_param_object(predicate(PI), Obj) :-
+    atom_pi(PI, Obj).
+man_param_object(function(PI), f(Name/Arity)) :-
+    atom_pi(PI, Name/Arity),
+    integer(Arity).
+man_param_object('CAPI'(Name), c(Name)).
+man_param_object(section(Sec), section(ID)) :-
+    atom_concat('sec:', Sec, ID).
+man_param_object(object(Text), Obj) :-
+    (   catch(atom_to_term(Text, Obj0, _), error(_,_), fail)
+    ->  Obj = Obj0
+    ;   atom_to_object(Text, Obj)
+    ).
+
+%!  pldoc_href_object(+HREF, -Object) is semidet.
+%
+%   True when HREF, a link as generated  for the PlDoc web server, points
+%   at documentation Object. Fails if HREF   does  not address a specific
+%   documented object, e.g., a link into a source file.
+
+pldoc_href_object(HREF, Object) :-
+    uri_components(HREF, Components),
+    uri_data(path, Components, Path),
+    atom(Path),
+    man_handler_location(Path),
+    uri_data(search, Components, Search),
+    atom(Search),
+    uri_query_components(Search, Query),
+    member(Name=Value, Query),
+    Param =.. [Name,Value],
+    man_param_object(Param, Object),
+    !.
+
+%  Note that the handlers are only registered  if the PlDoc server has
+%  been loaded.  If it is not, we cannot resolve the link.
+
+man_handler_location(Path) :-
+    man_handler_id(Id),
+    catch(http_location_by_id(Id, Path), error(_,_), fail),
+    !.
+
+man_handler_id(pldoc_man).
+man_handler_id(pldoc_object).
+
+%!  man_object_uri(+Object, -URI) is det.
+%!  man_uri_object(+URI, -Object) is semidet.
+%
+%   Convert between a documentation object and   a  `man:` IRI. Such IRIs
+%   embed manual hyperlinks into terminal   output using OSC8 hyperlinks.
+%
+%   @see help/1 and ansi_hyperlink/3.
+
+man_object_uri(Object0, URI) :-
+    localise_object(Object0, Object),
+    format(atom(URI), 'man:~q', [Object]).
+
+man_uri_object(URI, Object) :-
+    atom_concat('man:', Text, URI),
+    catch(term_to_atom(Object, Text), _, fail),
+    ground(Object).
+
 		 /*******************************
 		 *           NO HTTP		*
 		 *******************************/
+
+:- if(\+current_predicate(http_location_by_id/2)).
+
+http_location_by_id(Id, Location) :-
+    format(atom(Location), '/pldoc/~w', [Id]).
+
+:- endif.
 
 :- if(\+current_predicate(http_link_to_id/3)).
 

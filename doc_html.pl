@@ -78,6 +78,7 @@
 	    object_ref//2,              % +Object, +Options, //
 	    object_name//2,             % +Object, +Object
 	    object_href/2,              % +Object, -URL
+	    localise_object/2,          % +Object, -Canonical
 	    object_tree//3,             % +Tree, +Current, +Options
 	    object_page//2,             % +Object, +Options, //
 	    object_page_header//2,      % +File, +Options, //
