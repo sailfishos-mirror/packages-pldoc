@@ -165,6 +165,21 @@ test(uri_operator, Object == (==)/2) :-
     man_object_uri((==)/2, URI),
     man_uri_object(URI, Object).
 
+% The objects apropos/1 prints are clickable and so is the line that
+% offers the next page.
+
+test(apropos_clickable, Bad == []) :-
+    findall(URI,
+	    ( help_apropos(open, Obj, _Summary, _Score),
+	      man_object_uri(Obj, URI)
+	    ), URIs),
+    assertion(URIs \== []),
+    exclude(clickable, URIs, Bad).
+
+test(apropos_uri, Goal == apropos('open file', [offset(20)])) :-
+    prolog_help:apropos_uri('open file', 20, URI),
+    prolog_help:apropos_uri_goal(URI, Goal).
+
 test(not_an_object, fail) :-
     pldoc_href_object('/pldoc/doc/home/jan/x.pl#foo/1', _).
 

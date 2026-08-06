@@ -42,6 +42,7 @@
 	    pldoc_href_object/2,        % +HREF, -Object
 	    man_object_uri/2,           % +Object, -URI
 	    man_uri_object/2,           % +URI, -Object
+	    xpce_object_label/2,        % +Object, -Label
 
 	    man_content_tree/2,         % +Dir, -Tree
 	    man_packages_tree/1         % -Tree
@@ -1489,8 +1490,7 @@ prolog:doc_object_title(Obj, Title) :-
     !.
 prolog:doc_object_title(xpce, 'XPCE').
 prolog:doc_object_title(xpce(Class, Kind, Name), Title) :-
-    xpce_member_arrow(Kind, Arrow),
-    format(atom(Title), '~w~w~w', [Class, Arrow, Name]).
+    xpce_object_label(xpce(Class, Kind, Name), Title).
 
 %   xpce class members appear in the index as xpce(Class, Kind, Name)
 %   (see packages/pldoc/doc_util.pl atom_to_object/2 and packages/xpce/
@@ -1499,8 +1499,17 @@ prolog:doc_object_title(xpce(Class, Kind, Name), Title) :-
 %   so the entries are recognisable next to predicates.
 
 prolog:doc_object_link(xpce(Class, Kind, Name), _Options) -->
-    { xpce_member_arrow(Kind, Arrow) },
-    html([Class, Arrow, Name]).
+    { xpce_object_label(xpce(Class, Kind, Name), Label) },
+    html(Label).
+
+%!  xpce_object_label(+Object, -Label) is semidet.
+%
+%   Label is the conventional xpce arrow notation  for an xpce/3 class
+%   member, e.g. `point<-x`.
+
+xpce_object_label(xpce(Class, Kind, Name), Label) :-
+    xpce_member_arrow(Kind, Arrow),
+    atomic_list_concat([Class, Arrow, Name], Label).
 
 xpce_member_arrow(send,     '->').
 xpce_member_arrow(get,      '<-').
