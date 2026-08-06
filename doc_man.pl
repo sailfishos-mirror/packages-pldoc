@@ -98,6 +98,7 @@
 		     [ for(atom),
 		       links(boolean),
 		       navtree(boolean),
+		       link_scheme(atom),
 		       synopsis(boolean),
 		       footer(boolean),
 		       link_source(boolean),
@@ -557,6 +558,13 @@ object_spec(Atom, PI) :-
 %           * navtree(Bool)
 %           If `true` (default), display the navigation tree, otherwise
 %           suppress it.
+%
+%           * link_scheme(Scheme)
+%           Write the manual references as `Scheme:Object` IRIs rather
+%           than as links into the PlDoc server.  References that do not
+%           resolve to a documentation object are removed.  Used by
+%           help/1 to create clickable terminal output.  See
+%           man_object_uri/2.
 
 man_page(Obj, Options) -->
     { ground(Obj),
@@ -844,11 +852,18 @@ dom_element(a, Att, Content, Path, Options) -->
     },
     !,
     html(a(href(Myref), \dom_list(Content, Path, Options))).
+dom_element(a, _Att, Content, Path, Options) -->  % unresolvable manual link
+    { option(link_scheme(_), Options)             % there is nothing to click
+    },
+    !,
+    dom_list(Content, Path, Options).
 dom_element(span, Att, [CDATA], _, Options) -->
     { memberchk(class='pred-ext', Att),
       atom_pi(CDATA, PI),
       documented(PI),
-      (   option(server(false), Options)
+      (   option(link_scheme(Scheme), Options)
+      ->  object_scheme_uri(Scheme, PI, HREF)
+      ;   option(server(false), Options)
       ->  public_link(predicate(CDATA), HREF)
       ;   http_link_to_id(pldoc_man, [predicate=CDATA], HREF)
       )
@@ -967,6 +982,11 @@ documented(PI) :-
 %   @param Path     Currently loaded file
 %   @param ManRef   PlDoc server reference
 
+rewrite_ref(Class, Ref0, Path, ManRef, Options) :-
+    option(link_scheme(Scheme), Options),
+    !,
+    ref_object(Class, Ref0, Path, Object),
+    object_scheme_uri(Scheme, Object, ManRef).
 rewrite_ref(_Class, Ref, _Path, Ref, Options) :-
     option(server(false), Options),
     !.
@@ -974,18 +994,16 @@ rewrite_ref(Class, Ref0, Path, ManRef, _Options) :-
     rewrite_ref(Class, Ref0, Path, ManRef).
 
 rewrite_ref(pred, Ref0, _, Ref) :-              % Predicate/DCG reference
-    sub_atom(Ref0, _, _, A, '#'),
+    ref_fragment(Ref0, _File, Fragment),
     !,
-    sub_atom(Ref0, _, A, 0, Fragment),
     atom_to_object(Fragment, PI),
     manual_object(PI, _, _, _, _),
     uri_encoded(query_value, Fragment, Enc),
     http_location_by_id(pldoc_man, ManHandler),
     format(string(Ref), '~w?predicate=~w', [ManHandler, Enc]).
 rewrite_ref(function, Ref0, _, Ref) :-          % Arithmetic function reference
-    sub_atom(Ref0, _, _, A, '#'),
+    ref_fragment(Ref0, _File, Fragment),
     !,
-    sub_atom(Ref0, _, A, 0, Fragment),
     atom_to_object(Fragment, PI),
     manual_object(PI, _, _, _, _),
     PI=f(Name/Arity),
@@ -994,9 +1012,8 @@ rewrite_ref(function, Ref0, _, Ref) :-          % Arithmetic function reference
     http_location_by_id(pldoc_man, ManHandler),
     format(string(Ref), '~w?function=~w', [ManHandler, Enc]).
 rewrite_ref(func, Ref0, _, Ref) :-              % C-API reference
-    sub_atom(Ref0, _, _, A, '#'),
+    ref_fragment(Ref0, _File, Fragment),
     !,
-    sub_atom(Ref0, _, A, 0, Fragment),
     atom_to_object(Fragment, Obj),
     manual_object(Obj, _, _, _, _),
     Obj = c(Function),
@@ -1004,67 +1021,125 @@ rewrite_ref(func, Ref0, _, Ref) :-              % C-API reference
     http_location_by_id(pldoc_man, ManHandler),
     format(string(Ref), '~w?CAPI=~w', [ManHandler, Enc]).
 rewrite_ref(sec, Ref0, Path, Ref) :-            % Section inside a file
-    sub_atom(Ref0, B, _, A, '#'),
+    ref_fragment(Ref0, File, Fragment),
     !,
-    sub_atom(Ref0, _, A, 0, Fragment),
-    sub_atom(Ref0, 0, B, _, File),
     referenced_section(Fragment, File, Path, Section),
     object_href(Section, Ref).
 rewrite_ref(sec, File, Path, Ref) :-            % Section is a file
-    file_directory_name(Path, Dir),
-    atomic_list_concat([Dir, /, File], SecPath),
-    Obj = section(_, _, _, SecPath),
-    manual_object(Obj, _, _, _, _),
+    file_section(File, Path, Obj),
     !,
     object_href(Obj, Ref).
 rewrite_ref(cite, Ref0, Path, Ref) :-           % Citation (bit hard-wired)
     debug(pldoc(cite), 'Cite ref ~q ~q', [Ref0, Path]),
-    sub_atom(Ref0, _, _, A, '#'),
+    ref_fragment(Ref0, _File, Fragment),
     !,
-    sub_atom(Ref0, _, A, 0, Fragment),
     uri_encoded(query_value, Fragment, Enc),
     http_location_by_id(pldoc_man, ManHandler),
     format(string(Ref), '~w?section=bibliography#~w', [ManHandler, Enc]).
 rewrite_ref(flag, Ref0, Path, Ref) :-
-    sub_atom(Ref0, B, _, A, '#'),
+    ref_fragment(Ref0, File, Fragment),
     !,
-    sub_atom(Ref0, 0, B, _, File),
-    sub_atom(Ref0, _, A, 0, Fragment),
-    file_directory_name(Path, Dir),
-    atomic_list_concat([Dir, /, File], SecPath),
-    Obj = section(_, _, _, SecPath),
-    manual_object(Obj, _, _, _, _),
+    file_section(File, Path, Obj),
     !,
     object_href(Obj, Ref1),
     format(string(Ref), '~w#~w', [Ref1, Fragment]).
 rewrite_ref(gloss, Ref0, Path, Ref) :-
-    sub_atom(Ref0, B, _, A, '#'),
+    ref_fragment(Ref0, File, Fragment),
     !,
-    sub_atom(Ref0, 0, B, _, File),
-    sub_atom(Ref0, _, A, 0, Fragment),
-    file_directory_name(Path, Dir),
-    atomic_list_concat([Dir, /, File], SecPath),
-    Obj = section(_, _, _, SecPath),
-    manual_object(Obj, _, _, _, _),
+    file_section(File, Path, Obj),
     !,
     object_href(Obj, Ref1),
     format(string(Ref), '~w#~w', [Ref1, Fragment]).
 rewrite_ref(_, Ref0, _, Ref) :-                 % xpce class member reference
-    sub_atom(Ref0, _, _, A, '#'),
-    sub_atom(Ref0, _, A, 0, Fragment),
-    atomic_list_concat([class, ClassA, KindA, Name], '-', Fragment),
-    xpce_kind(KindA),
-    xpce_canonical_object(ClassA, KindA, Name, Obj),
+    xpce_member_ref(Ref0, Obj),
     !,
     object_href(Obj, Ref).
 rewrite_ref(_, Ref0, Path, Ref) :-              % section ref carrying class=""
-    sub_atom(Ref0, B, _, A, '#'),               % (xpce: class refs, objects)
-    sub_atom(Ref0, _, A, 0, Fragment),
+    ref_fragment(Ref0, File, Fragment),         % (xpce: class refs, objects)
     sub_atom(Fragment, 0, _, _, 'sec:'),
-    sub_atom(Ref0, 0, B, _, File),
     referenced_section(Fragment, File, Path, Section),
     !,
     object_href(Section, Ref).
+
+%!  ref_fragment(+Ref, -File, -Fragment) is semidet.
+%
+%   Split a manual reference into the file it points at and the anchor in
+%   that file.  File is '' if Ref only holds an anchor.
+
+ref_fragment(Ref, File, Fragment) :-
+    sub_atom(Ref, B, _, A, '#'),
+    !,
+    sub_atom(Ref, 0, B, _, File),
+    sub_atom(Ref, _, A, 0, Fragment).
+
+%!  file_section(+File, +Path, -Section) is semidet.
+%
+%   Section is the manual section that is  held by File, a manual file
+%   referenced from the manual file Path.
+
+file_section(File, Path, Section) :-
+    file_directory_name(Path, Dir),
+    atomic_list_concat([Dir, /, File], SecPath),
+    Section = section(_, _, _, SecPath),
+    manual_object(Section, _, _, _, _).
+
+%!  xpce_member_ref(+Ref, -Object) is semidet.
+%
+%   Object is the XPCE class member addressed by the in-page reference
+%   Ref, e.g. =|class-point-get-x|=.
+
+xpce_member_ref(Ref, Obj) :-
+    ref_fragment(Ref, _File, Fragment),
+    atomic_list_concat([class, ClassA, KindA, Name], '-', Fragment),
+    xpce_kind(KindA),
+    xpce_canonical_object(ClassA, KindA, Name, Obj).
+
+%!  ref_object(+Class, +Ref, +Path, -Object) is semidet.
+%
+%   True when Ref, a reference from the  HTML reference manual file Path,
+%   addresses documentation Object. This is  the resolving half of
+%   rewrite_ref/4 and, unlike the latter,  needs   no  PlDoc  server.  It
+%   drives the `link_scheme` option of  man_page//2. Flag and glossary
+%   references resolve to the section that holds them.
+
+ref_object(pred, Ref, _, Obj) :-
+    !,
+    ref_fragment(Ref, _File, Fragment),
+    atom_to_object(Fragment, Obj),
+    manual_object(Obj, _, _, _, _).
+ref_object(function, Ref, _, Obj) :-
+    !,
+    ref_fragment(Ref, _File, Fragment),
+    atom_to_object(Fragment, Obj),
+    Obj = f(_),
+    manual_object(Obj, _, _, _, _).
+ref_object(func, Ref, _, Obj) :-
+    !,
+    ref_fragment(Ref, _File, Fragment),
+    atom_to_object(Fragment, Obj),
+    Obj = c(_),
+    manual_object(Obj, _, _, _, _).
+ref_object(sec, Ref, Path, Obj) :-
+    !,
+    (   ref_fragment(Ref, File, Fragment)
+    ->  referenced_section(Fragment, File, Path, Obj)
+    ;   file_section(Ref, Path, Obj)
+    ).
+ref_object(Class, Ref, Path, Obj) :-
+    section_ref_class(Class),
+    !,
+    ref_fragment(Ref, File, _Fragment),
+    file_section(File, Path, Obj).
+ref_object(_, Ref, _, Obj) :-                   % xpce class member reference
+    xpce_member_ref(Ref, Obj),
+    !.
+ref_object(_, Ref, Path, Obj) :-                % section ref carrying class=""
+    ref_fragment(Ref, File, Fragment),
+    sub_atom(Fragment, 0, _, _, 'sec:'),
+    referenced_section(Fragment, File, Path, Obj).
+
+section_ref_class(flag).
+section_ref_class(gloss).
 
 %   The anchor id encodes the access form used at the call site
 %   (=|class-<class>-<kind>-<name>|=) but each method/instance variable
@@ -1518,17 +1593,27 @@ man_handler_location(Path) :-
 man_handler_id(pldoc_man).
 man_handler_id(pldoc_object).
 
-%!  man_object_uri(+Object, -URI) is det.
+%!  man_object_uri(+Object, -URI) is semidet.
 %!  man_uri_object(+URI, -Object) is semidet.
 %
 %   Convert between a documentation object and   a  `man:` IRI. Such IRIs
 %   embed manual hyperlinks into terminal   output using OSC8 hyperlinks.
+%   man_object_uri/2 fails if Object is not fully specified.
 %
 %   @see help/1 and ansi_hyperlink/3.
 
-man_object_uri(Object0, URI) :-
+man_object_uri(Object, URI) :-
+    object_scheme_uri(man, Object, URI).
+
+%!  object_scheme_uri(+Scheme, +Object, -URI) is semidet.
+%
+%   Write Object as an IRI using the pseudo scheme Scheme.  See the
+%   `link_scheme` option of man_page//2.
+
+object_scheme_uri(Scheme, Object0, URI) :-
     localise_object(Object0, Object),
-    format(atom(URI), 'man:~q', [Object]).
+    ground(Object),
+    format(atom(URI), '~w:~q', [Scheme, Object]).
 
 man_uri_object(URI, Object) :-
     atom_concat('man:', Text, URI),

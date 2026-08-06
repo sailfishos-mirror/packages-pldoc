@@ -36,6 +36,10 @@ swipl_plugin(pldoc
 	         NOINDEX
 	         PL_LIBS ${PLDOC_PRIV} ${SUPPORT})
 
+if(MULTI_THREADED)
+  test_libs(man_links)
+endif()
+
 swipl_examples(server/README server/man_server.pl)
 
 pkg_doc(pldoc

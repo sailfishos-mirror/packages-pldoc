@@ -1,0 +1,174 @@
+/*  Part of SWI-Prolog
+
+    Author:        Jan Wielemaker
+    E-mail:        jan@swi-prolog.org
+    WWW:           http://www.swi-prolog.org
+    Copyright (c)  2026, SWI-Prolog Solutions b.v.
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions
+    are met:
+
+    1. Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
+
+    2. Redistributions in binary form must reproduce the above copyright
+       notice, this list of conditions and the following disclaimer in
+       the documentation and/or other materials provided with the
+       distribution.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+    FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+    COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+    INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+    BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+    LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+    ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+*/
+
+:- module(test_man_links,
+          [ test_man_links/0
+          ]).
+:- use_module(library(plunit)).
+:- use_module(library(pldoc)).
+:- use_module(library(pldoc/doc_man)).
+:- use_module(library(doc_http), []).   % register the PlDoc HTTP handlers
+:- use_module(library(help)).
+:- use_module(library(http/html_write)).
+:- use_module(library(sgml)).
+:- use_module(library(apply)).
+:- use_module(library(yall)).
+:- use_module(library(lists)).
+:- use_module(library(terms), [mapsubterms/3]).
+
+/** <module> Test resolving manual hyperlinks
+
+Verify that the links help/1 embeds into  its output as OSC8 hyperlinks
+can be resolved back into the object they refer to.
+
+@see man_link/2 in library(help).
+*/
+
+test_man_links :-
+    run_tests([ man_links
+              ]).
+
+%!  page_hrefs(+Object, -HREFs) is det.
+%!  page_hrefs(+Object, +Options, -HREFs) is det.
+%
+%   HREFs are the links in the page   help/1 creates for Object. Uses the
+%   same options as help_html/3.
+
+page_hrefs(Object, HREFs) :-
+    page_dom(Object, [server(false), link_scheme(man)], DOM0),
+    mapsubterms(prolog_help:man_link, DOM0, DOM),
+    dom_hrefs(DOM, HREFs).
+
+page_hrefs(Object, Extra, HREFs) :-
+    page_dom(Object, Extra, DOM),
+    dom_hrefs(DOM, HREFs).
+
+page_dom(Object, Extra, DOM) :-
+    append(Extra,
+           [ no_manual(fail),
+             links(false),
+             link_source(false),
+             navtree(false),
+             qualified(always)
+           ], Options),
+    phrase(html(html([ head([]),
+                       body(dl(\man_page(Object, Options)))
+                     ])),
+           Tokens),
+    with_output_to(string(HTML), print_html(Tokens)),
+    load_html(string(HTML), DOM, []).
+
+dom_hrefs(DOM, HREFs) :-
+    findall(HREF,
+            ( sub_term(element(a,Attrs,_), DOM),
+              memberchk(href=HREF, Attrs)
+            ), HREFs0),
+    sort(HREFs0, HREFs).
+
+%!  clickable(+URI) is semidet.
+%
+%   True when URI is a `man:` IRI  and   help/1  finds the object it maps
+%   to. Note that help_objects_how/3 is  the   internal  entry point that
+%   does not print anything.
+
+clickable(URI) :-
+    man_uri_object(URI, Object),
+    prolog_help:help_objects_how(Object, _Matches, exact).
+
+%!  href_roundtrip(+HREF) is semidet.
+%
+%   True when HREF, a link to the  PlDoc   server,  maps to an object and
+%   the `man:` IRI of that object maps back to the same object.
+
+href_roundtrip(HREF) :-
+    pldoc_href_object(HREF, Object),
+    man_object_uri(Object, URI),
+    man_uri_object(URI, Object2),
+    Object2 =@= Object.
+
+pages([ format/2,
+        msort/2,
+        assertz/1,
+        section('sec:exception'),
+        f(sqrt/1),
+        c('PL_unify_atom')
+      ]).
+
+all_hrefs(HREFs) :-
+    pages(Pages),
+    maplist(page_hrefs, Pages, Lists),
+    append(Lists, HREFs).
+
+:- begin_tests(man_links).
+
+test(pages_have_links) :-
+    all_hrefs(HREFs),
+    assertion(HREFs \== []).
+
+% Every link man_page//2 creates for help/1 is a `man:` IRI that
+% resolves to an object help/1 accepts.
+
+test(clickable, Bad == []) :-
+    all_hrefs(HREFs),
+    exclude(clickable, HREFs, Bad).
+
+% The links of the PlDoc server map onto the same objects.  These reach
+% help/1 through the links doc_html.pl creates, e.g., the synopsis.
+
+test(server_roundtrip, Bad == []) :-
+    pages(Pages),
+    maplist([O,H]>>page_hrefs(O,[],H), Pages, Lists),
+    append(Lists, HREFs),
+    include(pldoc_link, HREFs, Ours),
+    assertion(Ours \== []),
+    exclude(href_roundtrip, Ours, Bad).
+
+test(uri, URI == 'man:format/3') :-
+    man_object_uri(format/3, URI).
+
+test(uri_section, URI == 'man:section(''sec:exception'')') :-
+    man_object_uri(section(2, '4.10', 'sec:exception', '/doc/exception.html'),
+                   URI).
+
+test(uri_operator, Object == (==)/2) :-
+    man_object_uri((==)/2, URI),
+    man_uri_object(URI, Object).
+
+test(not_an_object, fail) :-
+    pldoc_href_object('/pldoc/doc/home/jan/x.pl#foo/1', _).
+
+:- end_tests(man_links).
+
+pldoc_link(HREF) :-
+    sub_atom(HREF, 0, _, _, '/pldoc/').
